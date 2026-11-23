@@ -33,6 +33,7 @@ use vulkano::memory::DeviceMemoryError;
 #[cfg(feature = "vulkano")]
 use vulkano::memory::MemoryMapError;
 
+use crate::rutabaga_os::FromRawDescriptor;
 use crate::rutabaga_os::SafeDescriptor;
 
 /// Represents a buffer.  `base` contains the address of a buffer, while `len` contains the length
@@ -642,6 +643,14 @@ pub struct RutabagaHandle {
 impl RutabagaHandle {
     /// Clones an existing rutabaga handle, by using OS specific mechanisms.
     pub fn try_clone(&self) -> RutabagaResult<RutabagaHandle> {
+        // Apple blob handles carry no descriptor (fd -1); the host mapping comes from map_ptr.
+        if self.handle_type == RUTABAGA_MEM_HANDLE_TYPE_APPLE {
+            return Ok(RutabagaHandle {
+                // SAFETY: -1 is never a live descriptor, so nothing is owned or closed.
+                os_handle: unsafe { SafeDescriptor::from_raw_descriptor(-1) },
+                handle_type: self.handle_type,
+            });
+        }
         let clone = self
             .os_handle
             .try_clone()
