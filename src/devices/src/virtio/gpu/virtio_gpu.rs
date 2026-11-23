@@ -216,6 +216,12 @@ struct BlobRows {
 /// Signature of the renderer's optional pixel readback.
 type RendererReadPixels = unsafe extern "C" fn(u32, u32, *mut c_void, u32, u32, u32) -> i32;
 
+/// `KRUN_SCANOUT_DIRECT=1`: read blob scanouts from the blob's memory, skipping the renderer readback.
+fn scanout_direct() -> bool {
+    static DIRECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DIRECT.get_or_init(|| std::env::var_os("KRUN_SCANOUT_DIRECT").is_some_and(|v| v == "1"))
+}
+
 /// Looks up the renderer's pixel readback, once.
 ///
 /// Only a renderer that can read back a GPU-rendered image provides this, and
@@ -992,6 +998,13 @@ impl VirtioGpu {
             offset: blob.offset as usize,
         };
         let (frame_id, buffer) = self.display_backend.alloc_frame(scanout_id)?;
+
+        // A guest composer that waits for rendering before each flip leaves the finished picture in the blob itself.
+        if scanout_direct() && Self::copy_blob_pixels(&self.rutabaga, blob.resource_id, buffer, &rows) {
+            self.display_backend
+                .present_frame(scanout_id, frame_id, None)?;
+            return Ok(OkNoData);
+        }
 
         // 1. the renderer, if it offers a readback. Only a GPU-rendered buffer
         //    needs it, and only a renderer built with it can answer, so this is
