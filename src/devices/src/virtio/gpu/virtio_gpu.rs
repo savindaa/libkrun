@@ -16,8 +16,8 @@ use super::protocol::{
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{Sender, unbounded};
 use krun_display::{
-    DisplayBackend, DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayBackendInstance,
-    Rect, ResourceFormat,
+    BlobScanoutMemory, DisplayBackend, DisplayBackendBasicFramebuffer, DisplayBackendError,
+    DisplayBackendInstance, Rect, ResourceFormat,
 };
 use libc::c_void;
 #[cfg(target_os = "macos")]
@@ -997,6 +997,9 @@ impl VirtioGpu {
             height: blob.height as usize,
             offset: blob.offset as usize,
         };
+        if scanout_direct() && self.present_blob_in_place(scanout_id, blob, &rows) {
+            return Ok(OkNoData);
+        }
         let (frame_id, buffer) = self.display_backend.alloc_frame(scanout_id)?;
 
         // A guest composer that waits for rendering before each flip leaves the finished picture in the blob itself.
@@ -1039,6 +1042,42 @@ impl VirtioGpu {
             blob.resource_id
         );
         Err(ErrUnspec)
+    }
+
+    /// Hands the blob's host memory to a backend that can show it without a copy.
+    #[cfg(target_os = "macos")]
+    fn present_blob_in_place(&mut self, scanout_id: u32, blob: &BlobScanout, rows: &BlobRows) -> bool {
+        let Ok(map_ptr) = self.rutabaga.map_ptr(blob.resource_id) else {
+            return false;
+        };
+        if map_ptr == 0 || rows.height == 0 {
+            return false;
+        }
+        let size = rows.offset + rows.src_stride * (rows.height - 1) + rows.dst_stride;
+        // Safe: the mapping spans the resource and libkrun keeps it alive while the resource exists.
+        let memory = unsafe { std::slice::from_raw_parts(map_ptr as *const u8, size) };
+        let shown = BlobScanoutMemory {
+            resource_id: blob.resource_id,
+            memory,
+            offset: rows.offset as u32,
+            stride: rows.src_stride as u32,
+            width: blob.width,
+            height: blob.height,
+            format: blob.format,
+        };
+        match self.display_backend.present_blob(scanout_id, &shown) {
+            Ok(()) => true,
+            Err(DisplayBackendError::MethodNotSupported) => false,
+            Err(e) => {
+                debug!("present_blob failed, copying instead: {e}");
+                false
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn present_blob_in_place(&mut self, _: u32, _: &BlobScanout, _: &BlobRows) -> bool {
+        false
     }
 
     /// Copies a blob's pixels out of its own storage, row by row.

@@ -150,6 +150,7 @@ impl<T: Sync, I: DisplayBackendBasicFramebuffer + DisplayBackendNew<T>> IntoDisp
                 set_cursor: None,
                 move_cursor: None,
             },
+            blob: crate::DisplayBlobVtable { present_blob: None },
         }
     }
 }

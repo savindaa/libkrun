@@ -21,6 +21,7 @@ bitflags! {
     pub struct DisplayFeatures: u64 {
         const BASIC_FRAMEBUFFER = header::KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER as u64;
         const CURSOR = header::KRUN_DISPLAY_FEATURE_CURSOR as u64;
+        const BLOB_SCANOUT = header::KRUN_DISPLAY_FEATURE_BLOB_SCANOUT as u64;
     }
 }
 
@@ -79,4 +80,5 @@ impl TryFrom<u32> for ResourceFormat {
 pub type DisplayVtable = header::krun_display_vtable;
 pub type DisplayBasicFramebufferVtable = header::krun_display_basic_framebuffer_vtable;
 pub type DisplayCursorVtable = header::krun_display_cursor_vtable;
+pub type DisplayBlobVtable = header::krun_display_blob_vtable;
 pub type Rect = header::krun_rect;

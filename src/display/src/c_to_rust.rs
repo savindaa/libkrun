@@ -1,6 +1,7 @@
 use crate::{
     DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayBasicFramebufferVtable,
-    DisplayCursorVtable, DisplayFeatures, DisplayVtable, Rect, ResourceFormat, header,
+    DisplayBlobVtable, DisplayCursorVtable, DisplayFeatures, DisplayVtable, Rect, ResourceFormat,
+    header,
 };
 use log::{error, warn};
 use static_assertions::assert_not_impl_any;
@@ -46,9 +47,49 @@ pub struct DisplayBackendInstance {
     instance: *mut c_void,
     vtable: DisplayBasicFramebufferVtable,
     cursor: DisplayCursorVtable,
+    blob: DisplayBlobVtable,
+}
+
+/// A blob scanout handed to the backend in place; see `krun_display_present_blob_fn`.
+pub struct BlobScanoutMemory<'a> {
+    pub resource_id: u32,
+    pub memory: &'a [u8],
+    pub offset: u32,
+    pub stride: u32,
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
 }
 
 impl DisplayBackendInstance {
+    /// Let the backend show a blob without a copy; `MethodNotSupported` means copy it instead.
+    pub fn present_blob(
+        &mut self,
+        scanout_id: u32,
+        blob: &BlobScanoutMemory,
+    ) -> Result<(), DisplayBackendError> {
+        let Some(present_blob) = self.blob.present_blob else {
+            return Err(DisplayBackendError::MethodNotSupported);
+        };
+        into_rust_result!(unsafe {
+            present_blob(
+                self.instance,
+                scanout_id,
+                blob.resource_id,
+                blob.memory.as_ptr(),
+                blob.memory.len(),
+                blob.offset,
+                blob.stride,
+                blob.width,
+                blob.height,
+                blob.format,
+            )
+        },
+            0 => Ok(()),
+            header::KRUN_DISPLAY_ERR_METHOD_UNSUPPORTED => Err(DisplayBackendError::MethodNotSupported)
+        )
+    }
+
     /// Hand the backend the guest's pointer image; a zero size hides it.
     pub fn set_cursor(
         &mut self,
@@ -185,6 +226,8 @@ pub struct DisplayBackend<'userdata> {
     pub vtable: DisplayVtable,
     /// Only meaningful when `features` carries `CURSOR`; zero otherwise.
     pub cursor: DisplayCursorVtable,
+    /// Only meaningful when `features` carries `BLOB_SCANOUT`; zero otherwise.
+    pub blob: DisplayBlobVtable,
 }
 
 impl DisplayBackend<'_> {
@@ -212,6 +255,13 @@ impl DisplayBackend<'_> {
                     set_cursor: None,
                     move_cursor: None,
                 }
+            },
+            blob: if DisplayFeatures::from_bits_retain(self.features)
+                .contains(DisplayFeatures::BLOB_SCANOUT)
+            {
+                self.blob
+            } else {
+                DisplayBlobVtable { present_blob: None }
             },
         })
     }
@@ -244,9 +294,14 @@ impl DisplayBackend<'_> {
             {
                 error!("Missing required methods for CURSOR");
                 return false;
-            } else {
-                warn!("Unknown display features ({feature:x}) will be ignored")
             }
+            if feature.contains(DisplayFeatures::BLOB_SCANOUT) && self.blob.present_blob.is_none() {
+                error!("Missing required methods for BLOB_SCANOUT");
+                return false;
+            }
+        }
+        if DisplayFeatures::from_bits(self.features).is_none() {
+            warn!("Unknown display features ({:x}) will be ignored", self.features);
         }
         true
     }

@@ -42,6 +42,9 @@ extern "C" {
  * position instead of drawing a software pointer into every frame. */
 #define KRUN_DISPLAY_FEATURE_CURSOR 2
 
+/* The backend can show a blob scanout straight from the host memory backing it. */
+#define KRUN_DISPLAY_FEATURE_BLOB_SCANOUT 4
+
 /**
  * Called to create a display instance.
  *
@@ -179,6 +182,19 @@ typedef int32_t (*krun_display_set_cursor_fn)(void *instance, uint32_t scanout_i
  */
 typedef int32_t (*krun_display_move_cursor_fn)(void *instance, uint32_t scanout_id, uint32_t x, uint32_t y);
 
+/**
+ * Show a blob scanout in place instead of copying it into a frame. `base` points at `size` bytes of host
+ * memory backing resource `resource_id`; it stays valid while the resource lives, and the guest may draw into it
+ * again after its next flip. The picture starts `offset` bytes in, with `stride` bytes per row.
+ *
+ * Returns:
+ *  Zero when shown, or KRUN_DISPLAY_ERR_METHOD_UNSUPPORTED to have libkrun copy the frame through `alloc_frame`
+ *  and `present_frame` instead.
+ */
+typedef int32_t (*krun_display_present_blob_fn)(void *instance, uint32_t scanout_id, uint32_t resource_id,
+                                                const uint8_t *base, size_t size, uint32_t offset, uint32_t stride,
+                                                uint32_t width, uint32_t height, uint32_t format);
+
 struct krun_display_basic_framebuffer_vtable {
     krun_display_destroy_fn             destroy; // (optional)
     krun_display_disable_scanout_fn     disable_scanout; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
@@ -196,12 +212,17 @@ struct krun_display_cursor_vtable {
     krun_display_move_cursor_fn         move_cursor; // Required by KRUN_DISPLAY_FEATURE_CURSOR
 };
 
+struct krun_display_blob_vtable {
+    krun_display_present_blob_fn        present_blob; // Required by KRUN_DISPLAY_FEATURE_BLOB_SCANOUT
+};
+
 struct krun_display_backend {
     uint64_t features;
     void *create_userdata; // (optional)
     krun_display_create_fn create; // (optional)
     union krun_display_vtable vtable;
     struct krun_display_cursor_vtable cursor; // Read only when KRUN_DISPLAY_FEATURE_CURSOR is set
+    struct krun_display_blob_vtable blob; // Read only when KRUN_DISPLAY_FEATURE_BLOB_SCANOUT is set
 };
 
 #ifdef __cplusplus
